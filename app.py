@@ -1,14 +1,25 @@
+import matplotlib
+matplotlib.use('Agg')   # MUST be before pyplot
 
 from flask import Flask, request, render_template, redirect, url_for, flash, session
 import joblib
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+
 import io
 import base64
 from datetime import datetime
 import uuid
 import os
+
+
+from flask import Flask, request, render_template, redirect, url_for, flash, session
+import joblib
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_session'
