@@ -1,10 +1,7 @@
-Flask
+flask
 gunicorn
-scikit-learn
-pandas
 numpy
+pandas
+scikit-learn
 joblib
 matplotlib
-seaborn
-pyngrok
-Pillow
