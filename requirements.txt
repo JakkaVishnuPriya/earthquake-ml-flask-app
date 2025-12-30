@@ -1,7 +1,6 @@
-flask
-gunicorn
-numpy
+streamlit
 pandas
+numpy
 scikit-learn
 joblib
 matplotlib
