@@ -1,334 +1,273 @@
 import streamlit as st
-import joblib
-import pandas as pd
+import pickle
 import numpy as np
-import matplotlib.pyplot as plt
-from datetime import datetime
-import uuid
+import pandas as pd
+import plotly.graph_objects as go
+from sklearn.preprocessing import StandardScaler
+import os
 
-# ---------------------------
-# 1. Configuration & Setup
-# ---------------------------
 st.set_page_config(
-    page_title="Earthquake Alert Predictor",
+    page_title="Earthquake Alert System",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------
-# 2. Load Model & Scaler
-# ---------------------------
+# Custom CSS for professional styling
+st.markdown("""
+<style>
+    .main {
+        background-color: #f8f9fa;
+    }
+    .stMetric {
+        background-color: white;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .alert-green {
+        background-color: #d4edda;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #28a745;
+    }
+    .alert-orange {
+        background-color: #fff3cd;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #ff9800;
+    }
+    .alert-yellow {
+        background-color: #ffe5cc;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #ffc107;
+    }
+    .alert-red {
+        background-color: #f8d7da;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #dc3545;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 @st.cache_resource
-def load_model_artifacts():
+def load_model():
+    """Load the trained Random Forest model and scaler"""
     try:
-        model = joblib.load("earthquake_rf_model.pkl")
-        scaler = joblib.load("earthquake_scaler.pkl")
-        feature_names = joblib.load("feature_names.pkl")
+        with open('earthquake_model.pkl', 'rb') as f:
+            model = pickle.load(f)
+        with open('scaler.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+        with open('feature_names.pkl', 'rb') as f:
+            feature_names = pickle.load(f)
         return model, scaler, feature_names
-    except FileNotFoundError as e:
-        st.error(f"Error loading model files: {e}")
-        st.stop()
+    except FileNotFoundError:
+        st.error("Model files not found. Please train the model first.")
+        return None, None, None
 
-model, scaler, feature_names = load_model_artifacts()
+def predict_earthquake(features, model, scaler):
+    """Make prediction using the trained model"""
+    features_scaled = scaler.transform([features])
+    prediction = model.predict(features_scaled)[0]
+    probabilities = model.predict_proba(features_scaled)[0]
+    return prediction, probabilities
 
-# ---------------------------
-# 3. Alert Mappings & Colors
-# ---------------------------
-alert_to_class = {
-    "green": 0,
-    "yellow": 1,
-    "orange": 2,
-    "red": 3
-}
-class_to_alert = {v: k for k, v in alert_to_class.items()}
+def get_alert_level(prediction):
+    """Determine alert level based on prediction"""
+    levels = {
+        0: ("Green", "Safe", "#28a745"),
+        1: ("Orange", "Minor Alert", "#ff9800"),
+        2: ("Yellow", "Moderate Alert", "#ffc107"),
+        3: ("Red", "High Alert", "#dc3545")
+    }
+    return levels.get(prediction, ("Unknown", "Unknown", "#808080"))
 
-ALERT_COLORS = {
-    "green": "#10b981",
-    "yellow": "#f59e0b",
-    "orange": "#f97316",
-    "red": "#ef4444"
-}
+# Load model
+model, scaler, feature_names = load_model()
 
-ALERT_DESCRIPTIONS = {
-    "green": "✅ Low Risk - Normal conditions. No immediate action required.",
-    "yellow": "⚠️ Moderate Risk - Stay alert. Monitor situation and review emergency plans.",
-    "orange": "🔴 High Risk - Take precautions. Prepare emergency kits and identify safe zones.",
-    "red": "🚨 Critical Risk - Immediate action required. Expect very strong shaking and significant damage."
-}
-
-# ---------------------------
-# 4. Session State Management
-# ---------------------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "username" not in st.session_state:
-    st.session_state.username = None
-if "users" not in st.session_state:
-    st.session_state.users = {"demo_user": "demo123"}
-
-# ---------------------------
-# 5. Authentication Functions
-# ---------------------------
-def login_page():
-    st.markdown("## 🔐 Login")
-    col1, col2 = st.columns([1, 2])
-    
-    with col2:
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        
-        col_login, col_signup = st.columns(2)
-        with col_login:
-            if st.button("Login"):
-                if username in st.session_state.users and st.session_state.users[username] == password:
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    st.success("✅ Logged in successfully!")
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid credentials")
-        
-        with col_signup:
-            if st.button("Create Account"):
-                st.session_state.page = "signup"
-                st.rerun()
-
-def signup_page():
-    st.markdown("## 📝 Sign Up")
-    col1, col2 = st.columns([1, 2])
-    
-    with col2:
-        new_user = st.text_input("New username")
-        new_pass = st.text_input("New password", type="password")
-        confirm_pass = st.text_input("Confirm password", type="password")
-        
-        if st.button("Register"):
-            if not new_user or not new_pass:
-                st.error("Username and password cannot be empty.")
-            elif new_user in st.session_state.users:
-                st.error("Username already exists.")
-            elif new_pass != confirm_pass:
-                st.error("Passwords do not match.")
-            else:
-                st.session_state.users[new_user] = new_pass
-                st.success(f"✅ User {new_user} registered! Please log in.")
-                st.session_state.page = "login"
-                st.rerun()
-
-# ---------------------------
-# 6. Page Layout
-# ---------------------------
-st.sidebar.title("🌍 Quake Pred")
-
-if st.session_state.logged_in:
-    st.sidebar.markdown(f"**Logged in as:** {st.session_state.username}")
-    
-    page = st.sidebar.radio(
-        "Navigation",
-        ["Prediction", "Dashboard", "About"]
-    )
-    
-    if st.sidebar.button("Logout"):
-        st.session_state.logged_in = False
-        st.session_state.username = None
-        st.rerun()
-else:
-    page = st.sidebar.radio(
-        "Navigation",
-        ["Free Prediction", "Login", "Signup", "About"]
-    )
-
-# ---------------------------
-# 7. Main Content Pages
-# ---------------------------
-
-# HOME / FREE PREDICTION PAGE
-if page == "Free Prediction" or page == "Prediction":
-    st.title("🌍 Earthquake Alert Level Prediction")
-    st.markdown(
-        "Our advanced **Random Forest** model analyzes seismic data to predict "
-        "earthquake alert levels in real-time with **94%+ accuracy**."
-    )
-    
-    st.markdown("---")
-    
-    col1, col2, col3 = st.columns(3)
-    
+if model is not None:
+    # App header
+    col1, col2 = st.columns([3, 1])
     with col1:
-        magnitude = st.number_input(
-            "Magnitude",
-            min_value=0.0,
-            max_value=10.0,
-            value=6.5,
-            step=0.1,
-            help="Richter scale measurement"
+        st.title("🌍 Earthquake Prediction System")
+        st.subheader("AI-Powered Early Warning System")
+    
+    # Sidebar for inputs
+    st.sidebar.header("📊 Input Parameters")
+    st.sidebar.write("Enter earthquake parameters for prediction")
+    
+    # Feature inputs in sidebar
+    magnitude = st.sidebar.slider(
+        "Magnitude",
+        min_value=0.0,
+        max_value=10.0,
+        value=5.0,
+        step=0.1,
+        help="Earthquake magnitude (Richter scale)"
+    )
+    
+    depth = st.sidebar.slider(
+        "Depth (km)",
+        min_value=0.0,
+        max_value=800.0,
+        value=50.0,
+        step=1.0,
+        help="Earthquake depth in kilometers"
+    )
+    
+    cdi = st.sidebar.slider(
+        "CDI (Community Felt Reports)",
+        min_value=0.0,
+        max_value=10.0,
+        value=5.0,
+        step=0.1,
+        help="Community Decimal Intensity"
+    )
+    
+    mmi = st.sidebar.slider(
+        "MMI (Modified Mercalli Intensity)",
+        min_value=0.0,
+        max_value=12.0,
+        value=6.0,
+        step=0.1,
+        help="Modified Mercalli Intensity Scale"
+    )
+    
+    sig = st.sidebar.slider(
+        "Significance",
+        min_value=0.0,
+        max_value=1000.0,
+        value=100.0,
+        step=10.0,
+        help="Earthquake significance score"
+    )
+    
+    # Prepare features
+    features = [magnitude, depth, cdi, mmi, sig]
+    
+    # Prediction button
+    if st.sidebar.button("🔍 Predict Alert Level", key="predict_btn"):
+        prediction, probabilities = predict_earthquake(features, model, scaler)
+        alert_color, alert_name, hex_color = get_alert_level(prediction)
+        
+        # Display results
+        st.success("✓ Prediction Complete")
+        
+        # Main metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Alert Level", alert_name, delta=alert_color)
+        with col2:
+            st.metric("Magnitude", f"{magnitude:.1f}")
+        with col3:
+            st.metric("Depth", f"{depth:.0f} km")
+        with col4:
+            st.metric("Significance", f"{int(sig)}")
+        
+        # Alert box
+        st.markdown(f"""
+        <div class='alert-{alert_color.lower()}'>
+            <h3 style='color: {hex_color}; margin: 0;'>⚠️ {alert_name} - {alert_color.upper()} Alert</h3>
+            <p>The earthquake parameters indicate a <strong>{alert_name.lower()}</strong> level threat.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Probabilities visualization
+        st.subheader("📈 Prediction Confidence")
+        
+        # Create probability chart
+        alert_levels = ['Green (Safe)', 'Orange (Minor)', 'Yellow (Moderate)', 'Red (High)']
+        colors_chart = ['#28a745', '#ff9800', '#ffc107', '#dc3545']
+        
+        fig = go.Figure(data=[
+            go.Bar(
+                x=alert_levels,
+                y=probabilities * 100,
+                marker=dict(color=colors_chart),
+                text=[f'{p*100:.1f}%' for p in probabilities],
+                textposition='auto',
+            )
+        ])
+        
+        fig.update_layout(
+            title="Alert Level Probabilities",
+            xaxis_title="Alert Category",
+            yaxis_title="Confidence (%)",
+            yaxis=dict(range=[0, 100]),
+            template="plotly_white",
+            height=400,
+            showlegend=False
         )
-    
-    with col2:
-        depth = st.number_input(
-            "Depth (km)",
-            min_value=0.0,
-            max_value=700.0,
-            value=10.0,
-            step=1.0,
-            help="Epicenter depth"
-        )
-    
-    with col3:
-        sig = st.number_input(
-            "Significance Score",
-            min_value=0.0,
-            max_value=1000.0,
-            value=100.0,
-            step=10.0,
-            help="Impact potential score"
-        )
-    
-    col4, col5 = st.columns(2)
-    
-    with col4:
-        cdi = st.number_input(
-            "CDI (0–12)",
-            min_value=0.0,
-            max_value=12.0,
-            value=5.0,
-            step=0.1,
-            help="Community Decimal Intensity"
-        )
-    
-    with col5:
-        mmi = st.number_input(
-            "MMI (0–12)",
-            min_value=0.0,
-            max_value=12.0,
-            value=5.0,
-            step=0.1,
-            help="Modified Mercalli Intensity"
-        )
-    
-    if st.button("🔍 Predict Alert Level", use_container_width=True):
-        try:
-            # Prepare input
-            input_data = pd.DataFrame([{
-                "magnitude": magnitude,
-                "depth": depth,
-                "cdi": cdi,
-                "mmi": mmi,
-                "sig": sig
-            }])
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Feature analysis
+        st.subheader("🔬 Feature Analysis")
+        
+        feature_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Value': features,
+            'Scaled Value': scaler.transform([features])[0]
+        })
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.dataframe(feature_df, use_container_width=True, hide_index=True)
+        
+        with col2:
+            # Feature importance visualization (simple bar chart)
+            fig_features = go.Figure(data=[
+                go.Bar(
+                    x=feature_names,
+                    y=np.abs(features),
+                    marker=dict(color='#007bff'),
+                    text=[f'{v:.2f}' for v in features],
+                    textposition='auto'
+                )
+            ])
             
-            input_data = input_data[feature_names]
-            scaled_input = scaler.transform(input_data)
-            
-            # Predict
-            predicted_class = int(model.predict(scaled_input)[0])
-            probabilities = model.predict_proba(scaled_input)[0]
-            
-            predicted_alert = class_to_alert[predicted_class]
-            predicted_color = ALERT_COLORS[predicted_alert]
-            
-            # Display results
-            st.subheader("📊 Prediction Result")
-            
-            st.markdown(
-                f"<div style='padding:1.5rem;border-radius:0.75rem;"
-                f"background-color:{predicted_color};color:white;text-align:center;font-size:1.5rem;font-weight:bold'>"
-                f"{predicted_alert.upper()} ALERT"
-                f"</div>",
-                unsafe_allow_html=True
+            fig_features.update_layout(
+                title="Feature Values",
+                xaxis_title="Features",
+                yaxis_title="Normalized Value",
+                template="plotly_white",
+                height=400,
+                showlegend=False
             )
             
-            st.write(ALERT_DESCRIPTIONS[predicted_alert])
-            
-            # Probabilities table
-            st.subheader("📈 Probability Breakdown")
-            prob_df = pd.DataFrame({
-                "Alert Level": [class_to_alert[i].upper() for i in range(len(probabilities))],
-                "Probability": [f"{p*100:.2f}%" for p in probabilities]
-            })
-            st.table(prob_df)
-            
-            # Probability bar chart
-            fig, ax = plt.subplots(figsize=(8, 4))
-            alerts = [class_to_alert[i].capitalize() for i in range(len(probabilities))]
-            colors = [ALERT_COLORS[class_to_alert[i]] for i in range(len(probabilities))]
-            
-            bars = ax.bar(alerts, probabilities, color=colors)
-            ax.set_title("Prediction Probabilities", fontsize=12, weight="bold")
-            ax.set_ylabel("Probability", fontsize=10)
-            ax.set_ylim(0, 1)
-            
-            # Add percentage labels
-            for bar in bars:
-                height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height,
-                       f'{height*100:.1f}%', ha='center', va='bottom', fontsize=10)
-            
-            st.pyplot(fig)
-            
-        except Exception as e:
-            st.error(f"❌ Prediction error: {e}")
-
-# LOGIN PAGE
-elif page == "Login":
-    login_page()
-
-# SIGNUP PAGE
-elif page == "Signup":
-    signup_page()
-
-# DASHBOARD PAGE
-elif page == "Dashboard":
-    if not st.session_state.logged_in:
-        st.warning("⚠️ Please log in to access the dashboard.")
-    else:
-        st.title("📊 Dashboard")
-        st.write(f"Welcome, **{st.session_state.username}**!")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Predictions", "1,234")
-        with col2:
-            st.metric("Highest Alert", "RED")
-        with col3:
-            st.metric("Model Accuracy", "94.6%")
-        with col4:
-            st.metric("Active Streak", "7 days")
-        
-        st.markdown("---")
-        st.subheader("📈 Recent Predictions")
-        st.write("Coming soon: Prediction history and analytics")
-
-# ABOUT PAGE
-elif page == "About":
-    st.title("ℹ️ About Quake Pred")
+            st.plotly_chart(fig_features, use_container_width=True)
     
+    # Information section
+    with st.expander("ℹ️ About This System"):
+        st.markdown("""
+        ### Earthquake Prediction Model
+        
+        **Model Details:**
+        - Algorithm: Random Forest Classifier
+        - Accuracy: 93%
+        - Training Data: Comprehensive earthquake dataset
+        
+        **Features Used:**
+        1. **Magnitude**: Earthquake strength on Richter scale
+        2. **Depth**: Distance from Earth's surface (km)
+        3. **CDI**: Community Decimal Intensity (1-10 scale)
+        4. **MMI**: Modified Mercalli Intensity (1-12 scale)
+        5. **Significance**: Event significance score
+        
+        **Alert Levels:**
+        - 🟢 **Green**: Safe - Low seismic activity
+        - 🟠 **Orange**: Minor - Local precautions recommended
+        - 🟡 **Yellow**: Moderate - Enhanced monitoring suggested
+        - 🔴 **Red**: High - Immediate alert and action required
+        """)
+    
+    # Footer
+    st.markdown("---")
     st.markdown("""
-    ### 🎯 Our Mission
-    Provide real-time, accurate earthquake alert level predictions to help communities 
-    prepare and stay safe during seismic events.
-    
-    ### 🤖 Technology
-    - **Algorithm**: Random Forest Classifier (500 estimators, max_depth=15)
-    - **Accuracy**: 93%+ on test data
-    - **Features Used**: Magnitude, Depth, CDI, MMI, Significance Score
-    - **Framework**: Streamlit + scikit-learn
-    
-    ### 🚨 Alert Levels
-    - **GREEN**: Low risk, no action needed
-    - **YELLOW**: Moderate risk, stay alert
-    - **ORANGE**: High risk, take precautions
-    - **RED**: Critical risk, immediate action required
-    
-    ### 📚 Model Details
-    - **Training Data**: Balanced earthquake dataset (1000+ records)
-    - **Preprocessing**: StandardScaler for feature normalization
-    - **Hyperparameters**: Optimized for balanced precision-recall
-    - **Deployment**: Production-ready with joblib serialization
-    """)
-
-# Footer
-st.markdown("---")
-st.caption("🌍 Quake Pred - Advanced Earthquake Alert Prediction System | Made with Streamlit")
+    <div style='text-align: center; color: #666; font-size: 0.9rem;'>
+        <p>🌍 Earthquake Alert System | Powered by Random Forest ML Model</p>
+        <p>⚠️ For emergency situations, contact local seismic authorities</p>
+    </div>
+    """, unsafe_allow_html=True)
