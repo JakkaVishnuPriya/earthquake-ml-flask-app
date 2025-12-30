@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 import os
 
 st.set_page_config(
@@ -53,8 +55,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 @st.cache_resource
-def load_model():
-    """Load the trained Random Forest model and scaler"""
+def load_or_train_model():
+    """Load existing model or train new one"""
+    
+    # Try to load existing models
     try:
         with open('earthquake_model.pkl', 'rb') as f:
             model = pickle.load(f)
@@ -62,10 +66,64 @@ def load_model():
             scaler = pickle.load(f)
         with open('feature_names.pkl', 'rb') as f:
             feature_names = pickle.load(f)
+        st.success("✅ Model loaded successfully!")
         return model, scaler, feature_names
+    
     except FileNotFoundError:
-        st.error("Model files not found. Please train the model first.")
-        return None, None, None
+        st.warning("⚠️ Model files not found. Training model from scratch...")
+        
+        try:
+            # Load and preprocess data
+            df = pd.read_csv("earthquake_alert_balanced_dataset.csv")
+            df = df.drop_duplicates()
+            
+            from sklearn.preprocessing import LabelEncoder
+            label_encoder = LabelEncoder()
+            df['alert_encoded'] = label_encoder.fit_transform(df['alert'])
+            
+            X = df[['magnitude', 'depth', 'cdi', 'mmi', 'sig']]
+            y = df['alert_encoded']
+            
+            feature_names = X.columns.tolist()
+            
+            # Split data
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42
+            )
+            
+            # Scale features
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            
+            # Train Random Forest
+            st.info("🤖 Training Random Forest Model...")
+            model = RandomForestClassifier(
+                n_estimators=100,
+                random_state=42,
+                n_jobs=-1,
+                verbose=0
+            )
+            model.fit(X_train_scaled, y_train)
+            
+            # Save models
+            with open('earthquake_model.pkl', 'wb') as f:
+                pickle.dump(model, f)
+            with open('scaler.pkl', 'wb') as f:
+                pickle.dump(scaler, f)
+            with open('feature_names.pkl', 'wb') as f:
+                pickle.dump(feature_names, f)
+            
+            accuracy = model.score(scaler.transform(X_test), y_test)
+            st.success(f"✅ Model trained and saved! Accuracy: {accuracy:.2%}")
+            
+            return model, scaler, feature_names
+        
+        except FileNotFoundError:
+            st.error("❌ Dataset not found. Please ensure earthquake_alert_balanced_dataset.csv is in the directory.")
+            return None, None, None
+        except Exception as e:
+            st.error(f"❌ Error training model: {str(e)}")
+            return None, None, None
 
 def predict_earthquake(features, model, scaler):
     """Make prediction using the trained model"""
@@ -84,8 +142,8 @@ def get_alert_level(prediction):
     }
     return levels.get(prediction, ("Unknown", "Unknown", "#808080"))
 
-# Load model
-model, scaler, feature_names = load_model()
+# Load or train model
+model, scaler, feature_names = load_or_train_model()
 
 if model is not None:
     # App header
@@ -217,7 +275,7 @@ if model is not None:
             st.dataframe(feature_df, use_container_width=True, hide_index=True)
         
         with col2:
-            # Feature importance visualization (simple bar chart)
+            # Feature importance visualization
             fig_features = go.Figure(data=[
                 go.Bar(
                     x=feature_names,
